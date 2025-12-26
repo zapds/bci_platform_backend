@@ -4,13 +4,14 @@ This document provides comprehensive information for AI agents working on the BC
 
 ## Project Overview
 
-This is a FastAPI-based backend service for a Brain-Computer Interface platform. It handles EEG dataset management, including upload, storage, retrieval, and metadata extraction from EDF (European Data Format) files.
+This is a FastAPI-based backend service for a Brain-Computer Interface platform. It handles EEG dataset management, including upload, storage, retrieval, metadata extraction, preprocessing, and visualization of EDF (European Data Format) files.
 
 ## Technology Stack
 
 - **Framework**: FastAPI (v0.125.0)
 - **EEG Processing**: MNE-Python (v1.11.0) - for reading and analyzing EDF files
 - **Data Processing**: Pandas (v2.3.3)
+- **Visualization**: Matplotlib (via MNE-Python)
 - **Data Validation**: Pydantic (via FastAPI)
 - **Language**: Python 3.13+
 
@@ -24,12 +25,17 @@ backend/
 ├── AGENTS.md               # This file
 ├── api/
 │   ├── router.py           # Main API router, aggregates all sub-routers
-│   └── datasets.py         # Dataset CRUD operations and metadata extraction
+│   ├── datasets.py         # Dataset CRUD operations and metadata extraction
+│   ├── preprocessing.py    # EEG preprocessing operations (channel selection, montage)
+│   └── visualizations.py   # EEG visualization generation (plots, PSD, topomaps)
 ├── models/
-│   └── dataset.py          # Pydantic models for request/response validation
-└── datasets/               # Storage directory for uploaded datasets
-    ├── {id}.edf            # EDF data files
-    └── {id}.meta           # JSON metadata files
+│   ├── dataset.py          # Pydantic models for dataset request/response validation
+│   └── preprocessing.py    # Pydantic models for preprocessing request/response validation
+├── datasets/               # Storage directory for uploaded datasets
+│   ├── {id}.fif            # FIF data files (MNE-Python native format)
+│   └── {id}.meta           # JSON metadata files
+└── visuals/                # Storage directory for cached visualizations
+    └── {id}_{type}.png     # Cached visualization images
 ```
 
 ## Architecture
@@ -45,8 +51,12 @@ backend/
 - Sub-routers are included with tags for OpenAPI documentation
 - Current sub-routers:
   - `datasets_router` - tagged as "datasets"
+  - `preprocessing_router` - tagged as "preprocessing"
+  - `visualizations_router` - tagged as "visualizations"
 
-### API Endpoints (`api/datasets.py`)
+### API Endpoints
+
+#### Datasets (`api/datasets.py`)
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -55,6 +65,55 @@ backend/
 | GET | `/api/datasets/{id}` | Download a dataset file |
 | GET | `/api/datasets/{id}/metadata` | Get EEG metadata extracted from the file |
 | DELETE | `/api/datasets/{id}` | Delete a dataset and its metadata |
+
+#### Preprocessing (`api/preprocessing.py`)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/preprocessing/{id}/channels` | List all channels in a dataset |
+| POST | `/api/preprocessing/{id}/pick_channels` | Select specific channels (manual or all EEG) |
+| POST | `/api/preprocessing/{id}/set_montage` | Set electrode montage (default: standard_1020) |
+
+#### Visualizations (`api/visualizations.py`)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/datasets/{id}/visualizations/plot` | Get raw EEG plot visualization |
+| GET | `/api/datasets/{id}/visualizations/psd` | Get PSD (Power Spectral Density) plot |
+| GET | `/api/datasets/{id}/visualizations/psd_topomap` | Get PSD topomap (requires montage) |
+
+## Timeline Navigation & Workflow
+
+### Flexible Stage Navigation
+
+The preprocessing pipeline is designed to allow **non-linear navigation**. Users can navigate to any part of the timeline, skipping any stages in between. This is achieved through:
+
+1. **Immutable Dataset Operations**: Each preprocessing operation creates a new dataset with a new ID, preserving the original data
+2. **Independent Stages**: Preprocessing stages are independent and can be applied in any order
+3. **Direct Access**: Users can jump directly to any stage without completing prior stages (where technically feasible)
+
+### How It Works
+
+- Each preprocessing operation (e.g., `pick_channels`, `set_montage`) returns a **new dataset ID**
+- The original dataset remains unchanged
+- Users can branch off from any point in their processing history
+- Visualizations can be generated for any dataset at any stage
+
+### Example Workflow
+
+```
+Original Dataset (id: abc123)
+    ├── pick_channels → New Dataset (id: def456)
+    │       └── set_montage → New Dataset (id: ghi789)
+    │               └── visualizations...
+    └── set_montage → New Dataset (id: jkl012)  # Skip channel selection
+            └── visualizations...
+```
+
+### Stage Dependencies
+
+While stages can be skipped, some operations have prerequisites:
+- **PSD Topomap**: Requires a montage to be set (electrode positions needed)
 
 ## Artifact Design
 
@@ -75,8 +134,10 @@ Example IDs: `74pzy7nv`, `a3bc8def`
 
 Each dataset consists of two files stored in the `datasets/` directory:
 
-1. **Data File**: `{id}.edf` - The raw EDF file containing EEG data
+1. **Data File**: `{id}.fif` - The EEG data stored in MNE-Python's native FIF format
 2. **Metadata File**: `{id}.meta` - JSON file containing user-provided metadata
+
+**Note**: Users upload EDF files, which are converted to FIF format for internal storage. When downloading, FIF files are exported back to EDF format.
 
 ### Metadata File Format (`{id}.meta`)
 
@@ -155,14 +216,29 @@ raise HTTPException(status_code=404, detail="Dataset not found")
 
 ### MNE-Python Usage
 
-- Use `mne.io.read_raw_edf()` for reading EDF files
+- Use `mne.io.read_raw_edf()` for reading uploaded EDF files
+- Use `raw.save()` to store data in FIF format (MNE-Python's native format)
+- Use `raw.export()` to convert FIF back to EDF for downloads
 - Use `preload=False` when only reading metadata to save memory
 - Access channel types via `raw.get_channel_types()`
 - Access recording info via `raw.info`
 
-### Supported File Formats
+### File Format Flow
 
-Currently only `.edf` (European Data Format) files are accepted. Validation occurs on upload.
+1. **Upload**: User uploads `.edf` file → converted and stored as `.fif`
+2. **Storage**: Data stored internally as `.fif` (MNE-Python native format)
+3. **Download**: `.fif` file exported back to `.edf` for user download
+
+### Why FIF Format?
+
+- FIF is MNE-Python's native format, providing better integration with MNE processing pipelines
+- Faster read/write operations for MNE-based analysis
+- Preserves all MNE-specific metadata and annotations
+- Enables future preprocessing and analysis features
+
+### Supported Upload Formats
+
+Currently only `.edf` (European Data Format) files are accepted for upload. Validation occurs on upload.
 
 ## Adding New Features
 

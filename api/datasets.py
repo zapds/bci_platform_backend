@@ -41,28 +41,49 @@ def load_metadata(file_id: str) -> dict:
     return {}
 
 
+def save_raw(raw: mne.io.BaseRaw):
+    file_id = str(generate_artifact_id())
+    file_path = DATASETS_DIR / (file_id + ".fif")
+    raw.save(file_path, overwrite=True)
+    return file_id
+
+def get_raw_from_id(id: str) -> mne.io.BaseRaw:
+    file_path = DATASETS_DIR / (id + ".fif")
+    
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    
+    # raw = mne.io.read_raw_edf(file_path, preload=False)
+    raw = mne.io.Raw(file_path, preload=False)
+    return raw
+
+
 @router.post("/datasets/new")
 async def upload_dataset(file: UploadFile = File(...)):
     # Validate file extension
     if not file.filename or not file.filename.lower().endswith('.edf'):
         raise HTTPException(status_code=400, detail="Only .EDF files are accepted")
 
-    file_id = str(generate_artifact_id())
-    file_path = DATASETS_DIR / (file_id + ".edf")
-    
+    file_path = DATASETS_DIR / (generate_artifact_id() + ".edf")
     with open(file_path, "wb") as f:
         content = await file.read()
         f.write(content)
+    raw = mne.io.read_raw_edf(file_path, preload=False)
+    fif_file_id = save_raw(raw)
 
-    # Save metadata file
-    save_metadata(file_id, {"original_filename": file.filename})
+    save_metadata(fif_file_id, {"original_filename": file.filename})
 
-    return {"id": file_id}
+    return {"id": fif_file_id}
 
 
 @router.get("/datasets/{id}", response_class=FileResponse)
 async def get_dataset(id: str):
+    
+    raw = get_raw_from_id(id)
     file_path = DATASETS_DIR / (id + ".edf")
+    
+    raw.export(file_path, fmt="edf", overwrite=True)
+
     
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="Dataset not found")
@@ -73,12 +94,8 @@ async def get_dataset(id: str):
 
 @router.get("/datasets/{id}/metadata", response_model=DatasetMetadata)
 async def get_dataset_metadata(id: str):
-    file_path = DATASETS_DIR / (id + ".edf")
-    
-    if not file_path.exists():
-        raise HTTPException(status_code=404, detail="Dataset not found")
-    
-    raw = mne.io.read_raw_edf(file_path, preload=False)
+
+    raw = get_raw_from_id(id)
 
     info = raw.info
 
@@ -103,7 +120,7 @@ async def get_dataset_metadata(id: str):
 @router.get("/datasets", response_model=List[DatasetFileMetadata])
 async def list_datasets():
     datasets = []
-    for file in DATASETS_DIR.glob("*.edf"):
+    for file in DATASETS_DIR.glob("*.fif"):
         meta = load_metadata(file.stem)
         original_filename = meta.get("original_filename", file.name)
         datasets.append({
@@ -117,7 +134,7 @@ async def list_datasets():
 
 @router.delete("/datasets/{id}")
 async def delete_dataset(id: str):
-    file_path = DATASETS_DIR / (id + ".edf")
+    file_path = DATASETS_DIR / (id + ".fif")
     
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="Dataset not found")
