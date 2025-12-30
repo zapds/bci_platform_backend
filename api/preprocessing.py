@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 import mne
 import pandas as pd
 
-from models.preprocessing import BaseResponse, GetChannelsResponse, PickChannelsRequest, PickChannelsResponse, SetAnnotationsRequest
+from models.preprocessing import BaseResponse, FilterRequest, GetChannelsResponse, PickChannelsRequest, PickChannelsResponse, SetAnnotationsRequest
 from .datasets import get_raw_from_id, save_raw, DATASETS_DIR
 
 
@@ -112,9 +112,22 @@ async def set_annotations(
     # Load raw and set annotations
     raw = get_raw_from_id(id)
     raw.load_data()
-    raw.set_annotations(annotations)
+    raw = raw.set_annotations(annotations)
     
     # Save and return new ID
     new_id = save_raw(raw)
     
+    return BaseResponse(id=new_id)
+
+@router.post("/preprocessing/{id}/filter", response_model=BaseResponse)
+async def apply_filter(
+    id: str,
+    request: FilterRequest
+) -> BaseResponse:
+    raw = get_raw_from_id(id)
+    raw.load_data()
+    raw = raw.filter(l_freq=request.l_freq, h_freq=request.h_freq)
+
+    new_id = save_raw(raw)
+
     return BaseResponse(id=new_id)

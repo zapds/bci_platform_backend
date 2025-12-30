@@ -54,7 +54,7 @@ def get_raw_from_id(id: str) -> mne.io.BaseRaw:
         raise HTTPException(status_code=404, detail="Dataset not found")
     
     # raw = mne.io.read_raw_edf(file_path, preload=False)
-    raw = mne.io.Raw(file_path, preload=False)
+    raw = mne.io.read_raw_fif(file_path, preload=True)
     return raw
 
 

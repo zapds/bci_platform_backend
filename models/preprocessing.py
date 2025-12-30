@@ -16,6 +16,10 @@ class SetAnnotationsRequest(BaseModel):
     duration_column: str
     description_column: str
 
+class FilterRequest(BaseModel):
+    l_freq: float | None = None
+    h_freq: float | None = None
+
 
 class BaseResponse(BaseModel):
     id: str
