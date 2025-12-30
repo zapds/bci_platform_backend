@@ -11,6 +11,12 @@ class PickChannelsRequest(BaseModel):
     channels: Optional[list[str]] = None  # Required when mode is "manual"
 
 
+class SetAnnotationsRequest(BaseModel):
+    onset_column: str
+    duration_column: str
+    description_column: str
+
+
 class BaseResponse(BaseModel):
     id: str
 

@@ -1,8 +1,11 @@
-from fastapi import APIRouter, HTTPException
-import mne
+from pathlib import Path
 
-from models.preprocessing import BaseResponse, GetChannelsResponse, PickChannelsRequest, PickChannelsResponse
-from .datasets import get_raw_from_id, save_raw
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form
+import mne
+import pandas as pd
+
+from models.preprocessing import BaseResponse, GetChannelsResponse, PickChannelsRequest, PickChannelsResponse, SetAnnotationsRequest
+from .datasets import get_raw_from_id, save_raw, DATASETS_DIR
 
 
 router = APIRouter()
@@ -68,4 +71,50 @@ async def set_montage(id: str, montage_name: str = "standard_1020") -> BaseRespo
 
     new_id = save_raw(raw)
 
+    return BaseResponse(id=new_id)
+
+@router.post("/preprocessing/{id}/set_annotations", response_model=BaseResponse)
+async def set_annotations(
+    id: str,
+    file: UploadFile = File(...),
+    onset_column: str = Form(...),
+    duration_column: str = Form(...),
+    description_column: str = Form(...)
+) -> BaseResponse:
+    # Validate file type
+    if not file.filename.endswith(".csv"):
+        raise HTTPException(status_code=400, detail="File must be a CSV")
+    
+    # Save the CSV file
+    csv_path = DATASETS_DIR / f"{id}_annotations.csv"
+    content = await file.read()
+    csv_path.write_bytes(content)
+    
+    # Read the CSV using pandas
+    try:
+        df = pd.read_csv(csv_path)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Error reading CSV: {str(e)}")
+    
+    # Validate columns exist
+    for col_name, col_value in [("onset_column", onset_column), ("duration_column", duration_column), ("description_column", description_column)]:
+        if col_value not in df.columns:
+            raise HTTPException(status_code=400, detail=f"Column '{col_value}' not found in CSV")
+    
+    # Extract columns as lists
+    onsets = df[onset_column].tolist()
+    durations = df[duration_column].tolist()
+    descriptions = df[description_column].tolist()
+    
+    # Create MNE Annotations object
+    annotations = mne.Annotations(onset=onsets, duration=durations, description=descriptions)
+    
+    # Load raw and set annotations
+    raw = get_raw_from_id(id)
+    raw.load_data()
+    raw.set_annotations(annotations)
+    
+    # Save and return new ID
+    new_id = save_raw(raw)
+    
     return BaseResponse(id=new_id)
