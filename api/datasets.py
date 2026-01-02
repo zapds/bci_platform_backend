@@ -57,6 +57,20 @@ def get_raw_from_id(id: str) -> mne.io.BaseRaw:
     raw = mne.io.read_raw_fif(file_path, preload=True)
     return raw
 
+def save_epochs(epochs: mne.Epochs) -> str:
+    file_id = str(generate_artifact_id())
+    file_path = DATASETS_DIR / (file_id + "-epo.fif")
+    epochs.save(file_path, overwrite=True)
+    return file_id
+
+def get_epochs_from_id(id: str) -> mne.Epochs:
+    file_path = DATASETS_DIR / (id + "-epo.fif")
+    
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Epochs dataset not found")
+    
+    epochs = mne.read_epochs(file_path, preload=True)
+    return epochs
 
 @router.post("/datasets/new")
 async def upload_dataset(file: UploadFile = File(...)):

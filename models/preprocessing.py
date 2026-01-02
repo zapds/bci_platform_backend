@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Optional, Literal
+from typing import Optional, Literal, Dict, List, Tuple
 
 
 class GetChannelsResponse(BaseModel):
@@ -28,4 +28,13 @@ class BaseResponse(BaseModel):
 class PickChannelsResponse(BaseModel):
     id: str
     channels: list[str]
+
+
+class EpochsRequest(BaseModel):
+    tmin: float
+    tmax: float
+    baseline: Tuple[float | None, float | None] | None = (None, 0)
+    reject_criteria: Dict[str, float] | None = None
+    events_filter: List[str] | None = None
+    set_reference: bool = False
 

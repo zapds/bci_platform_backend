@@ -1,11 +1,13 @@
 from pathlib import Path
+from typing import Dict, List, Tuple
 
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 import mne
+import numpy as np
 import pandas as pd
 
-from models.preprocessing import BaseResponse, FilterRequest, GetChannelsResponse, PickChannelsRequest, PickChannelsResponse, SetAnnotationsRequest
-from .datasets import get_raw_from_id, save_raw, DATASETS_DIR
+from models.preprocessing import BaseResponse, EpochsRequest, FilterRequest, GetChannelsResponse, PickChannelsRequest, PickChannelsResponse, SetAnnotationsRequest
+from .datasets import get_raw_from_id, save_epochs, save_raw, DATASETS_DIR
 
 
 router = APIRouter()
@@ -130,4 +132,56 @@ async def apply_filter(
 
     new_id = save_raw(raw)
 
+    return BaseResponse(id=new_id)
+
+
+@router.get("/preprocessing/{id}/event_names", response_model=List[str])
+async def get_event_names(id: str) -> List[str]:
+    raw = get_raw_from_id(id)
+    raw.load_data()
+
+    events, event_dict = mne.events_from_annotations(raw)
+
+    return list(event_dict.keys())
+
+@router.post("/preprocessing/{id}/create_epochs", response_model=BaseResponse)
+async def create_epochs(
+    id: str,
+    request: EpochsRequest
+) -> BaseResponse:
+    raw = get_raw_from_id(id)
+    raw.load_data()
+
+    events, event_dict = mne.events_from_annotations(raw)
+
+    if request.events_filter:
+        event_dict = {
+            k: v for k, v in event_dict.items()
+            if k in request.events_filter
+        }
+
+        if not event_dict:
+            raise HTTPException(
+                status_code=400,
+                detail="No matching events found for events_filter"
+            )
+
+        valid_ids = set(event_dict.values())
+        events = events[np.isin(events[:, 2], list(valid_ids))]
+
+    epochs = mne.Epochs(
+        raw,
+        events,
+        event_id=event_dict,
+        tmin=request.tmin,
+        tmax=request.tmax,
+        baseline=request.baseline,
+        reject=request.reject_criteria,
+        preload=True,
+    )
+
+    if request.set_reference:
+        epochs = epochs.set_eeg_reference('average')
+
+    new_id = save_epochs(epochs)
     return BaseResponse(id=new_id)
